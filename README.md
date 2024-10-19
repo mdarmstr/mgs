@@ -1,0 +1,2 @@
+# mgs
+Minimum gausian separability
