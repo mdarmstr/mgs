@@ -1,30 +1,26 @@
-function data = generateData(clusters, N, obsRange, dims)
-%GENERATEDATA Generates N datasets with specified clusters and variable observations in arbitrary dimensions
+function data = generateData(clusters, N, obsRange)
+%GENERATEDATA Generates N datasets with specified clusters and fixed total observations per cluster
 %
-% Usage:
-%   data = generateData(clusters, N)
-%   data = generateData(clusters, N, obsRange)
-%   data = generateData(clusters, N, obsRange, dims)
+% Description:
+%   This function generates multiple datasets, each containing a specified number of 
+%   clusters in a 2D space. The number of observations in each cluster is equal 
+%   within a dataset and increases linearly across datasets based on the obsRange.
 %
 % Inputs:
-%   clusters  - Integer specifying the number of clusters per dataset
-%   N         - Integer specifying the number of datasets to generate
+%   clusters  - (Integer) Number of clusters per dataset
+%   N         - (Integer) Number of datasets to generate
 %   obsRange  - (Optional) 2-element vector [minObs, maxObs] specifying the 
-%               range of observations per cluster. Default is [100, 500].
-%   dims      - (Optional) Integer specifying the number of dimensions. 
-%               Default is 2.
+%               range of total observations per cluster. Default is [100, 500].
 %
 % Outputs:
-%   data      - 1xN cell array, each cell containing a Mx(dims+1) matrix where:
-%               - Columns 1 to dims are the standardized and rotated coordinates
-%               - Column dims+1 contains class labels (1 to clusters)
+%   data      - 1xN cell array, each cell containing a Mx3 matrix where:
+%               - Columns 1 & 2 are the standardized and rotated coordinates
+%               - Column 3 contains class labels (1 to clusters)
 %
-% Example:
-%   datasets = generateData(3, 5, [150, 300], 4);
 
-    % Check and set default obsRange if not provided
+    %% Input Validation and Default Settings
     if nargin < 3
-        obsRange = [100, 500];  % Default range: 100 to 500 observations per cluster
+        obsRange = [150, 300];  % Default observations range per cluster
     else
         % Validate obsRange
         if numel(obsRange) ~= 2 || obsRange(1) <= 0 || obsRange(2) < obsRange(1)
@@ -32,56 +28,52 @@ function data = generateData(clusters, N, obsRange, dims)
         end
     end
 
-    % Check and set default dims if not provided
-    if nargin < 4
-        dims = 2;  % Default number of dimensions
-    else
-        % Validate dims
-        if ~isscalar(dims) || dims < 1 || dims ~= floor(dims)
-            error('dims must be a positive integer scalar representing the number of dimensions.');
-        end
+    % Validate clusters
+    if ~isscalar(clusters) || clusters < 1 || clusters ~= floor(clusters)
+        error('clusters must be a positive integer.');
     end
 
-    % Preallocate cell array for N datasets
-    data = cell(1, N);
+    % Validate N
+    if ~isscalar(N) || N < 1 || N ~= floor(N)
+        error('N must be a positive integer.');
+    end
 
-    % Generate and store cluster parameters to maintain consistency across datasets
-    clusterParams = struct('Pi', {}, 'X_0', {}, 'eig_vals', {}, 'rotationMatrix', {});
+    %% Preallocate Cell Array for Datasets
+    data = cell(1, N);  % 1xN cell array
+
+    %% Generate Cluster Parameters Once to Maintain Consistency
+    clusterParams = struct('Pi', {}, 'X_0', {}, 'eig_maj', {}, 'eig_min', {});
     for qq = 1:clusters
-        % Random orientation: generate a random orthogonal rotation matrix
-        rotationMatrix = orth(randn(dims));  % Random orthogonal matrix via QR decomposition
-        clusterParams(qq).rotationMatrix = rotationMatrix;
+        clusterParams(qq).Pi = rand(1) * 2 * pi;  % Random orientation angle [0, 2π]
+        max_drift = 60;  % Maximum drift from origin
+        clusterParams(qq).X_0 = [rand(1) * max_drift, rand(1) * max_drift];  % Cluster center
 
-        % Random cluster center within a specified range
-        max_drift = 60;
-        clusterParams(qq).X_0 = rand(1, dims) * max_drift;  % Random cluster center in 'dims' dimensions
-
-        % Generate eigenvalues for the covariance matrix
-        max_eig = 20;
-        % Ensure eigenvalues are positive
-        eig_vals = abs(normrnd(0.5, 0.1, [1, dims])) * max_eig;
-        clusterParams(qq).eig_vals = eig_vals;
+        max_eig = 20;  % Scaling factor for eigenvalues
+        clusterParams(qq).eig_maj = normrnd(0.5, 0.1) * max_eig;  % Major axis length
+        clusterParams(qq).eig_min = abs(normrnd(0.5, 0.1) * clusterParams(qq).eig_maj);  % Minor axis length
     end
 
-    % Loop over each dataset to generate data
+    %% Linearly Space Total Observations for Datasets
+    obsCounts = round(linspace(obsRange(1), obsRange(2), N));  % Increasing obs per cluster
+
+    %% Generate Each Dataset
     for dd = 1:N
-        dataset = [];  % Initialize empty matrix for the current dataset
+        dataset = [];  % Initialize empty matrix for current dataset
+        num_obs = obsCounts(dd);  % Fixed number of observations per cluster for this dataset
 
         for qq = 1:clusters
-            % Randomly determine the number of observations for this cluster
-            num_obs = randi(obsRange);
+            % Generate random points with specified eigenvalues
+            ranx = normrnd(0, 1, [2, num_obs]) .* [clusterParams(qq).eig_maj; clusterParams(qq).eig_min];
 
-            % Generate random points with specified eigenvalues (variance in each dimension)
-            % Assuming independent features before rotation
-            ranx = normrnd(0, 1, [dims, num_obs]) .* clusterParams(qq).eig_vals';
-
-            % Rotate the data points using the precomputed rotation matrix
-            rotated_ranx = (clusterParams(qq).rotationMatrix * ranx)';  % Resulting in num_obs x dims matrix
+            % Rotate the data points by Pi
+            rotationMatrix = [cos(clusterParams(qq).Pi), -sin(clusterParams(qq).Pi);
+                              sin(clusterParams(qq).Pi),  cos(clusterParams(qq).Pi)];
+            rotated_ranx = ranx' * rotationMatrix;  % Resulting in num_obs x 2 matrix
 
             % Translate the rotated points by cluster center X_0
             translated_data = rotated_ranx + clusterParams(qq).X_0;
 
-            % Append class label as the last column
+            % Append class label as the third column
             class_labels = repmat(qq, num_obs, 1);
             cluster_data = [translated_data, class_labels];
 
@@ -89,14 +81,15 @@ function data = generateData(clusters, N, obsRange, dims)
             dataset = [dataset; cluster_data];  %#ok<AGROW>
         end
 
-        % Standardize the feature columns (1 to dims)
-        dataset(:,1:dims) = (dataset(:,1:dims) - mean(dataset(:,1:dims), 1)) ./ std(dataset(:,1:dims), 0, 1);
+        %% Standardize Features
+        % Subtract mean and divide by standard deviation for each feature
+        dataset(:,1:2) = (dataset(:,1:2) - mean(dataset(:,1:2), 1)) ./ std(dataset(:,1:2), 0, 1);
 
-        % Perform Singular Value Decomposition (SVD) for rotation in higher dimensions
-        [U, S, ~] = svd(dataset(:,1:dims), 'econ');
-        dataset(:,1:dims) = (U * S);
+        %% Apply Singular Value Decomposition (SVD) for Rotation
+        [u, s, ~] = svd(dataset(:,1:2), 'econ');
+        dataset(:,1:2) = (u * s);
 
-        % Store the processed dataset in the cell array
+        %% Store the Processed Dataset
         data{dd} = dataset;
     end
 
